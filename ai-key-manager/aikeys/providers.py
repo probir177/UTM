@@ -96,6 +96,23 @@ BUILTIN_PROVIDERS: dict[str, Provider] = {
         priority=60,
         signup="https://dashboard.cohere.com/api-keys",
     ),
+    "together": Provider(
+        name="together",
+        base_url="https://api.together.xyz/v1",
+        model="meta-llama/Llama-3.3-70B-Instruct-Turbo-Free",
+        env="TOGETHER_API_KEY",
+        priority=70,
+        signup="https://api.together.ai/settings/api-keys",
+    ),
+    "deepseek": Provider(
+        name="deepseek",
+        base_url="https://api.deepseek.com/v1",
+        model="deepseek-chat",
+        env="DEEPSEEK_API_KEY",
+        priority=80,
+        key_prefix="sk-",
+        signup="https://platform.deepseek.com/api_keys",
+    ),
 }
 
 

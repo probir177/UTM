@@ -29,13 +29,15 @@ providers:
       - AIza_your_gemini_key
 
   # --- Adding ANY other provider ("other everything") ---
-  # Any provider with an OpenAI-compatible /chat/completions endpoint works.
-  # Just give it a base_url and a model:
-  together:
+  # Groq, Gemini, OpenRouter, Mistral, HuggingFace, Cohere, Together, and
+  # DeepSeek are built in already — just `aikeys add-key <name> <KEY>`.
+  # For anything else with an OpenAI-compatible /chat/completions endpoint,
+  # add an entry here with a base_url and a model. Example (xAI Grok):
+  xai:
     enabled: true
-    priority: 70
-    base_url: https://api.together.xyz/v1
-    model: meta-llama/Llama-3.3-70B-Instruct-Turbo-Free
-    env: TOGETHER_API_KEY
+    priority: 90
+    base_url: https://api.x.ai/v1
+    model: grok-2-latest
+    env: XAI_API_KEY
     keys:
-      - your_together_key
+      - your_xai_key

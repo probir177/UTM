@@ -34,6 +34,8 @@ Sign up (free) and paste the key with `aikeys add-key`:
 | Mistral     | https://console.mistral.ai/api-keys |
 | HuggingFace | https://huggingface.co/settings/tokens |
 | Cohere      | https://dashboard.cohere.com/api-keys |
+| Together    | https://api.together.ai/settings/api-keys |
+| DeepSeek    | https://platform.deepseek.com/api_keys |
 
 ## Install
 
