@@ -15,6 +15,12 @@ from aikeys.providers import Provider
 from aikeys.router import build_plan, mask_key, usable_providers
 
 
+@pytest.fixture(autouse=True)
+def isolated_config(tmp_path, monkeypatch):
+    """Keep any state.save() during tests inside a temp dir, not ~/.config."""
+    monkeypatch.setenv("AIKEYS_CONFIG", str(tmp_path / "config.yaml"))
+
+
 def make_providers():
     return {
         "groq": Provider(
@@ -164,3 +170,95 @@ def test_400_still_tries_next_provider():
     )
     result = chat(make_providers(), "hi", transport=rec.transport())
     assert result.provider == "gemini"
+
+
+# ---- cooldown / state ------------------------------------------------
+
+from aikeys.state import State, key_id
+
+
+def test_build_plan_moves_cooling_keys_to_the_end():
+    provs = make_providers()
+    state = State()
+    # Put groq's first key on cooldown; it should be tried last.
+    state.set_cooldown("groq", "gsk_aaa", 60, now=1000)
+    plan = build_plan(provs, state=state, now=1000)
+    order = [(a.provider.name, a.key) for a in plan]
+    assert order == [
+        ("groq", "gsk_bbb"),
+        ("gemini", "AIza_ccc"),
+        ("groq", "gsk_aaa"),  # cooling → last resort
+    ]
+
+
+def test_expired_cooldown_is_not_skipped():
+    state = State()
+    state.set_cooldown("groq", "gsk_aaa", 60, now=1000)
+    # 61s later the cooldown has expired.
+    assert state.in_cooldown("groq", "gsk_aaa", now=1061) is False
+
+
+def test_success_records_stats_and_clears_cooldown():
+    provs = make_providers()
+    state = State()
+    state.set_cooldown("groq", "gsk_aaa", 60, now=1000)
+    # Only the cooling key exists in a single-provider plan to force its use.
+    rec = Recorder([(200, ok_body("ok"))])
+    result = chat(
+        provs, "hi", only="groq", transport=rec.transport(), state=state, now=1000
+    )
+    assert result.text == "ok"
+    entry = state.entries[key_id("groq", "gsk_bbb")]
+    assert entry["success"] == 1
+    # The used key's cooldown is cleared on success.
+    assert state.in_cooldown("groq", "gsk_bbb", now=1000) is False
+
+
+def test_429_sets_cooldown_on_the_failing_key():
+    provs = make_providers()
+    state = State()
+    rec = Recorder([(429, err_body("rate limited")), (200, ok_body("ok"))])
+    chat(provs, "hi", transport=rec.transport(), state=state, now=2000)
+    # The first key got rate limited → cooldown active.
+    assert state.in_cooldown("groq", "gsk_aaa", now=2000) is True
+    assert state.entries[key_id("groq", "gsk_aaa")]["fail"] == 1
+
+
+# ---- streaming -------------------------------------------------------
+
+
+def sse(*deltas):
+    """Build an OpenAI-style SSE body from content deltas."""
+    lines = []
+    for d in deltas:
+        lines.append("data: " + json.dumps({"choices": [{"delta": {"content": d}}]}))
+    lines.append("data: [DONE]")
+    return "\n\n".join(lines) + "\n\n"
+
+
+class StreamRecorder:
+    def __init__(self, status, body_text):
+        self.status = status
+        self.body_text = body_text
+
+    def transport(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if self.status == 200:
+                return httpx.Response(200, text=self.body_text)
+            return httpx.Response(self.status, json=err_body("nope"))
+
+        return httpx.MockTransport(handler)
+
+
+def test_streaming_calls_on_delta_and_returns_full_text():
+    got: list[str] = []
+    rec = StreamRecorder(200, sse("Hel", "lo ", "world"))
+    result = chat(
+        make_providers(),
+        "hi",
+        only="groq",
+        transport=rec.transport(),
+        on_delta=got.append,
+    )
+    assert "".join(got) == "Hello world"
+    assert result.text == "Hello world"

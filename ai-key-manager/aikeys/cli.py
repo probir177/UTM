@@ -22,6 +22,7 @@ from . import __version__
 from .client import ChatError, chat
 from .config import Config, config_path
 from .router import build_plan, mask_key, usable_providers
+from .state import State
 
 app = typer.Typer(
     add_completion=False,
@@ -121,34 +122,41 @@ def test(
 ) -> None:
     """Ping each stored key with a tiny prompt and report which ones work."""
     cfg = _load()
-    plan = build_plan(cfg.providers, only=provider)
+    plan = build_plan(cfg.providers, only=provider)  # test every key, cooling or not
     if not plan:
         console.print("[yellow]No usable keys to test.[/yellow]")
         raise typer.Exit(1)
-    from .client import _post_chat  # reuse the same request path
+    from .client import _post_chat, _error_reason, FALLBACK_STATUS
+    from .state import cooldown_for_status
 
     import httpx
 
+    state = State.load()
     messages = [{"role": "user", "content": "ping"}]
     ok = dead = 0
     for attempt in plan:
-        label = f"{attempt.provider.name} [{attempt.masked_key}]"
+        name = attempt.provider.name
+        label = f"{name} [{attempt.masked_key}]"
         try:
             resp = _post_chat(attempt, messages, None, 30.0, None)
         except httpx.HTTPError as exc:
             console.print(f"[red]✗[/red] {label}: {exc}")
+            state.record_failure(name, attempt.key, 0)
             dead += 1
             continue
         if resp.status_code == 200:
             console.print(f"[green]✓[/green] {label}: working")
+            state.record_success(name, attempt.key)
             ok += 1
         else:
-            from .client import _error_reason
-
             console.print(
                 f"[red]✗[/red] {label}: HTTP {resp.status_code}: {_error_reason(resp)}"
             )
+            state.record_failure(name, attempt.key, resp.status_code)
+            if resp.status_code in FALLBACK_STATUS:
+                state.set_cooldown(name, attempt.key, cooldown_for_status(resp.status_code))
             dead += 1
+    state.save()
     console.print(f"\n[bold]{ok} working, {dead} not working.[/bold]")
 
 
@@ -159,37 +167,61 @@ def chat(
     provider: str = typer.Option(None, "--provider", "-p", help="Force one provider"),
     model: str = typer.Option(None, "--model", "-m", help="Override the model"),
     quiet: bool = typer.Option(False, "-q", "--quiet", help="Print only the reply"),
+    no_stream: bool = typer.Option(False, "--no-stream", help="Wait for the full reply"),
 ) -> None:
     """Send a prompt; auto-route to the free/cheapest provider with fallback."""
     cfg = _load()
+    state = State.load()
     if interactive:
-        _chat_loop(cfg, provider, model, quiet)
+        _chat_loop(cfg, state, provider, model, quiet, no_stream)
         return
     if not prompt:
         console.print("[red]Provide a prompt or use -i for interactive mode.[/red]")
         raise typer.Exit(1)
-    _one_shot(cfg, prompt, provider, model, quiet)
+    _one_shot(cfg, state, prompt, provider, model, quiet, no_stream)
 
 
-def _one_shot(cfg: Config, prompt, provider, model, quiet) -> None:
+def _stream_printer():
+    """Return an on_delta callback that writes raw tokens as they arrive."""
+
+    def emit(delta: str) -> None:
+        sys.stdout.write(delta)
+        sys.stdout.flush()
+
+    return emit
+
+
+def _footer(result) -> str:
+    return (
+        f"[dim]— {result.provider} ({result.model}) "
+        f"via {result.masked_key}, attempt #{result.attempts}[/dim]"
+    )
+
+
+def _one_shot(cfg: Config, state, prompt, provider, model, quiet, no_stream) -> None:
     from .client import chat as run_chat
 
+    on_delta = None if no_stream else _stream_printer()
     try:
-        result = run_chat(cfg.providers, prompt, only=provider, model=model)
+        result = run_chat(
+            cfg.providers, prompt, only=provider, model=model,
+            state=state, on_delta=on_delta,
+        )
     except ChatError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1)
-    if quiet:
+    if on_delta is not None:
+        print()  # newline after the streamed reply
+        if not quiet:
+            console.print(_footer(result))
+    elif quiet:
         print(result.text)
     else:
         console.print(result.text)
-        console.print(
-            f"\n[dim]— {result.provider} ({result.model}) "
-            f"via {result.masked_key}, attempt #{result.attempts}[/dim]"
-        )
+        console.print("\n" + _footer(result))
 
 
-def _chat_loop(cfg: Config, provider, model, quiet) -> None:
+def _chat_loop(cfg: Config, state, provider, model, quiet, no_stream) -> None:
     from .client import chat as run_chat
 
     console.print("[dim]Interactive chat. Type 'exit' or Ctrl-D to quit.[/dim]")
@@ -205,18 +237,60 @@ def _chat_loop(cfg: Config, provider, model, quiet) -> None:
         if not user.strip():
             continue
         history.append({"role": "user", "content": user})
+        on_delta = None if no_stream else _stream_printer()
+        if on_delta is not None:
+            console.print("[bold green]ai ›[/bold green] ", end="")
         try:
-            result = run_chat(cfg.providers, history, only=provider, model=model)
+            result = run_chat(
+                cfg.providers, history, only=provider, model=model,
+                state=state, on_delta=on_delta,
+            )
         except ChatError as exc:
             console.print(f"[red]{exc}[/red]")
             history.pop()
             continue
         history.append({"role": "assistant", "content": result.text})
-        console.print(f"[bold green]ai ›[/bold green] {result.text}")
+        if on_delta is not None:
+            print()
+        else:
+            console.print(f"[bold green]ai ›[/bold green] {result.text}")
         if not quiet:
             console.print(
                 f"[dim]— {result.provider} ({result.model}) via {result.masked_key}[/dim]"
             )
+
+
+@app.command()
+def stats() -> None:
+    """Show per-key usage: successes, failures, and any active cooldown."""
+    cfg = _load()
+    state = State.load()
+    table = Table(title="Key usage & cooldowns")
+    table.add_column("Provider", style="bold")
+    table.add_column("Key", no_wrap=True)
+    table.add_column("OK", justify="right", style="green")
+    table.add_column("Fail", justify="right", style="red")
+    table.add_column("Last", justify="right")
+    table.add_column("Cooldown", justify="right")
+    rows = 0
+    for prov in sorted(cfg.providers.values(), key=lambda p: (p.priority, p.name)):
+        for key in prov.keys:
+            s = state.stats_for(prov.name, key)
+            remaining = state.cooldown_remaining(prov.name, key)
+            cooldown = f"{int(remaining)}s" if remaining > 0 else "-"
+            table.add_row(
+                prov.name,
+                mask_key(key),
+                str(s["success"]),
+                str(s["fail"]),
+                str(s["last_status"] or "-"),
+                cooldown,
+            )
+            rows += 1
+    if rows == 0:
+        console.print("[yellow]No keys stored yet.[/yellow]")
+        return
+    console.print(table)
 
 
 @app.command()

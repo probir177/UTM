@@ -22,6 +22,20 @@ providers (cheapest/free first). For each request it tries the first
 provider's first key; on a rate limit (`429`), quota, or auth error it moves
 to that provider's next key, then to the next provider — until one answers.
 
+### Smart cooldown (makes free keys last)
+
+When a key hits a rate limit, `aikeys` puts it on a short **cooldown** and
+prefers fresh keys on the next request, coming back to it only after the
+cooldown expires (60s for rate limits, 1h for auth/quota errors). This spreads
+load across all your keys and providers so you rarely run out of free quota.
+State lives at `~/.config/aikeys/state.json` and stores only a hashed
+fingerprint of each key — never the key itself. See usage with `aikeys stats`.
+
+### Streaming
+
+Replies stream token-by-token by default. Pass `--no-stream` to wait for the
+full reply instead (useful when piping output).
+
 ## Get free keys (legitimately)
 
 Sign up (free) and paste the key with `aikeys add-key`:
@@ -65,8 +79,14 @@ aikeys keys
 # Check which keys actually work right now
 aikeys test
 
-# Ask something — auto-routed to the free/cheapest working provider
+# See per-key usage: successes, failures, and active cooldowns
+aikeys stats
+
+# Ask something — streams from the free/cheapest working provider
 aikeys chat "Explain quantum entanglement in one line"
+
+# Wait for the whole reply instead of streaming
+aikeys chat "Summarize this" --no-stream
 
 # Force a specific provider or model
 aikeys chat "hello" --provider gemini --model gemini-2.0-flash

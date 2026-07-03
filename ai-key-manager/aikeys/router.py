@@ -50,6 +50,8 @@ def usable_providers(providers: dict[str, Provider]) -> list[Provider]:
 def build_plan(
     providers: dict[str, Provider],
     only: str | None = None,
+    state=None,
+    now: float | None = None,
 ) -> list[Attempt]:
     """Return the ordered list of attempts.
 
@@ -58,11 +60,20 @@ def build_plan(
     provider.
 
     ``only`` restricts the plan to a single named provider.
+
+    When ``state`` is given, keys currently in cooldown are moved to the end
+    of the plan (tried only as a last resort), so fresh keys are preferred and
+    rate-limited keys get time to recover.
     """
-    plan: list[Attempt] = []
+    fresh: list[Attempt] = []
+    cooling: list[Attempt] = []
     for prov in usable_providers(providers):
         if only and prov.name != only.lower():
             continue
         for idx, key in enumerate(prov.keys):
-            plan.append(Attempt(provider=prov, key=key, key_index=idx))
-    return plan
+            attempt = Attempt(provider=prov, key=key, key_index=idx)
+            if state is not None and state.in_cooldown(prov.name, key, now):
+                cooling.append(attempt)
+            else:
+                fresh.append(attempt)
+    return fresh + cooling
