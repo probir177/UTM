@@ -1,0 +1,41 @@
+# Example aikeys config.
+#
+# Copy the parts you need into ~/.config/aikeys/config.yaml (the tool writes
+# there automatically when you run `aikeys add-key`). You normally do NOT edit
+# this by hand — use `aikeys add-key <provider> <KEY>`. This file is only a
+# reference for what the config looks like and how to add a custom provider.
+#
+# Lower `priority` = tried first. Put your most generous free tiers first.
+# Keys are stored locally only. NEVER commit your real keys.
+
+providers:
+  groq:
+    enabled: true
+    priority: 10
+    base_url: https://api.groq.com/openai/v1
+    model: llama-3.3-70b-versatile
+    env: GROQ_API_KEY
+    keys:
+      - gsk_your_first_groq_key
+      - gsk_your_second_groq_key   # add as many as you like; they rotate
+
+  gemini:
+    enabled: true
+    priority: 20
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai
+    model: gemini-2.0-flash
+    env: GEMINI_API_KEY
+    keys:
+      - AIza_your_gemini_key
+
+  # --- Adding ANY other provider ("other everything") ---
+  # Any provider with an OpenAI-compatible /chat/completions endpoint works.
+  # Just give it a base_url and a model:
+  together:
+    enabled: true
+    priority: 70
+    base_url: https://api.together.xyz/v1
+    model: meta-llama/Llama-3.3-70B-Instruct-Turbo-Free
+    env: TOGETHER_API_KEY
+    keys:
+      - your_together_key
