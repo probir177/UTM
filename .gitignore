@@ -71,3 +71,13 @@ build*/
 sysroot*/
 .DS_Store
 CodeSigning.xcconfig
+
+# ai-key-manager (Python tool)
+ai-key-manager/.venv/
+ai-key-manager/**/__pycache__/
+ai-key-manager/*.egg-info/
+ai-key-manager/.pytest_cache/
+# never commit real API keys or local runtime state
+config.yaml
+aikeys.config.yaml
+state.json

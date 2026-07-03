@@ -1,0 +1,25 @@
+[project]
+name = "aikeys"
+version = "0.1.0"
+description = "Manage your own AI provider API keys with rotation and route chat to the free/cheapest provider."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "httpx>=0.27",
+    "typer>=0.12",
+    "rich>=13.0",
+    "PyYAML>=6.0",
+]
+
+[project.scripts]
+aikeys = "aikeys.cli:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["aikeys"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
