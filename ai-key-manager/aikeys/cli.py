@@ -12,6 +12,7 @@ Commands:
 
 from __future__ import annotations
 
+import os
 import sys
 
 import typer
@@ -34,6 +35,13 @@ console = Console()
 
 def _load() -> Config:
     return Config.load()
+
+
+def _print_startup_note() -> None:
+    if os.name == "nt":
+        console.print(
+            "[dim]Windows detected: config will be stored in APPDATA/aikeys[/dim]"
+        )
 
 
 @app.command()
@@ -301,6 +309,7 @@ def version() -> None:
 
 
 def main() -> None:
+    _print_startup_note()
     app()
 
 

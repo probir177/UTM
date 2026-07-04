@@ -23,6 +23,10 @@ def config_path() -> Path:
     override = os.environ.get("AIKEYS_CONFIG")
     if override:
         return Path(override).expanduser()
+    if os.name == "nt":
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            return Path(appdata).expanduser() / "aikeys" / "config.yaml"
     base = os.environ.get("XDG_CONFIG_HOME", "~/.config")
     return Path(base).expanduser() / "aikeys" / "config.yaml"
 
